@@ -1,0 +1,420 @@
+---
+title: "Figure1"
+author:
+  - name: "Isaias Hernandez"
+    affiliation: "Postdoc - INSERM U1138 Centre de Recherche des Cordeliers"
+    email: "isaias.hernandez@sorbonne.universite.fr"
+    date: "`r format(Sys.time(), '%B %d, %Y')`"
+format:
+  html:
+    code-fold: true
+    code-summary: "Show the code"
+    toc: true
+    toc_float: true
+    toc-expand: true
+    self_contained: true
+    embed-resources: true
+    thumbnails: false
+    lightbox: true
+    gallery: true
+    highlight-style: tango
+    theme: cerulean
+editor: visual
+---
+
+To reproduce all panels in this figure you need to download the data (Figure1_metaDat.csv) from the EGA repository (see Readme.txt).
+
+## Panel a
+
+```{r, echo=T,eval=T}
+
+# ============================================================
+# Fig1/code/panel_a_donuts.R
+# Panel a: donut charts of molecular group repartition per arm
+# ============================================================
+library(dplyr)
+library(ggplot2)
+
+source("Figure1/00_colors.R")
+source("Figure1/01_load_data.R")
+
+plot_panel_a <- function(meta) {
+  
+  panel_a_dat <- meta %>%
+    select(arm, MG) %>%
+    filter(!is.na(arm), !is.na(MG)) %>%
+    count(arm, MG, name = "n") %>%
+    group_by(arm) %>%
+    mutate(pct = n / sum(n) * 100) %>%
+    ungroup()
+  
+  ggplot(panel_a_dat, aes(x = 2, y = n, fill = MG)) +
+    geom_col(color = "white", width = 1) +
+    geom_text(aes(label = n), position = position_stack(vjust = 0.5), size = 3.2) +
+    coord_polar(theta = "y") +
+    xlim(0.5, 2.5) +                     # creates the donut hole
+    scale_fill_manual(values = mg_colors, name = "MG", drop = FALSE) +
+    facet_wrap(~ arm, nrow = 1) +
+    theme_void(base_size = 11) +
+    theme(
+      strip.text = element_text(face = "bold", size = 11),
+      legend.position = "right"
+    )
+}
+
+# --- usage ---
+ meta <- load_figure1_data("Figure1/Figure1_metaDat.csv") ###Replace with your path
+ p_a  <- plot_panel_a(meta)
+ p_a
+# ggsave("Fig1/output/panel_a.pdf", p_a, width = 7, height = 3)
+
+
+```
+
+## Panel b
+
+```{r,echo=T,eval=T,fig.width = 32,fig.height = 8}
+# ============================================================
+# Fig1/code/panel_b_prisma_heatmap.R
+# Panel B: PRISMA gene-expression heatmap with clinical annotations
+# ============================================================
+library(pheatmap)
+
+source("Figure1/00_colors.R")
+source("Figure1/01_load_data.R")   # for load_figure1_data()
+
+plot_panel_b <- function(meta) {
+  
+  prisma_genes <- c("CD274", "IGHA1", "IGHD", "CD38", "CXCL13")
+  pcr_cols     <- paste0("PCR_", prisma_genes, "_norm")
+  stopifnot(all(pcr_cols %in% colnames(meta)))
+  
+  expr_mat <- as.matrix(meta[, pcr_cols])
+  rownames(expr_mat) <- meta$ID
+  colnames(expr_mat) <- prisma_genes
+  
+  annotation <- data.frame(
+    Response    = meta$Best_response_L1_RECIST,
+    IMDC        = meta$IMDC,
+    Sarcomatoid = meta$Sarcomatoid,   # display labels (Present/Absent) — was Sarcomatoid_binary
+    Rhabdoid    = meta$Rhabdoid,      # display labels (Present/Absent) — was Rhabdoid_binary
+    MG          = meta$MG,
+    arm         = meta$arm,
+    row.names   = meta$ID
+  )
+  
+  breaksList <- seq(-2.5, 2.5, by = 0.1)
+  
+  pheatmap::pheatmap(
+    t(expr_mat),
+    cluster_cols       = TRUE,
+    cluster_rows       = TRUE,
+    show_colnames      = FALSE,
+    show_rownames      = TRUE,
+    annotation_names_row = TRUE,
+    annotation_legend   = TRUE,
+    na_col              = "bisque4",
+    annotation_colors   = annoCol_panel_b,   # was annoCol
+    annotation          = annotation,
+    main                = "All patients",
+    cellheight          = 10,
+    cellwidth           = 10,
+    color  = colorRampPalette(hcl.colors(palette = "Spectral", 12, rev = TRUE))(length(breaksList)),
+    breaks = breaksList,
+    silent = TRUE
+  )
+}
+# --- usage ---
+meta <- load_figure1_data("Figure1/Figure1_metaDat.csv") ###Replace with your path
+ hm_b <- plot_panel_b(meta)
+ hm_b
+# ggsave("Fig1/output/panel_b.pdf", hm_b, width = 9, height = 4)
+```
+
+## Panel c
+
+```{r,echo=T,eval=T,fig.width=16,fig.height=12}
+# ============================================================
+# Fig1/code/panel_c_prisma_violins.R
+# Panel C: PRISMA score violin/box plots across 5 groupings,
+# with pairwise Wilcoxon comparisons (as in the original figure)
+# ============================================================
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(patchwork)
+
+source("Figure1/00_colors.R")
+source("Figure1/01_load_data.R")
+source("Figure1/utils_plot_group_boxplot.R")
+make_melted <- function(meta, group_col, value_col = "PRISMA_num") {
+  data.frame(
+    variable = value_col,
+    groups   = meta[[group_col]],
+    value    = meta[[value_col]]
+  ) %>% na.omit()
+}
+
+panel_c_config <- list(
+  list(group_col = "MG",              palette = mg_colors,                header = "ccRCC molecular\ngroup"),
+  list(group_col = "IMDC",            palette = imdc_colors,               header = "IMDC"),
+  list(group_col = "Sarcomatoid", palette = sarcomatoid_binary_colors, header = "Sarcomatoid\nComponent"),
+  list(group_col = "Rhabdoid",    palette = rhabdoid_binary_colors,    header = "Rhabdoid\nComponent"),
+  list(group_col = "Both_components",    palette = both_components_colors,    header = "Both\nComponents")  # palette still placeholder
+)
+
+plot_panel_c <- function(meta) {
+  
+  subplots <- lapply(seq_along(panel_c_config), function(i) {
+    cfg <- panel_c_config[[i]]
+    
+    res <- plot_group_boxplot(
+      data.m        = make_melted(meta, cfg$group_col),
+      variable      = "PRISMA_num",
+      violin        = TRUE,
+      hide_test     = FALSE,
+      compare_groups = TRUE,
+      alpha         = 0.5,
+      plot_outlier  = TRUE,
+      specify_col   = cfg$palette,
+      size_point    = 0,
+      title_size    = 8,
+      add_jitter    = TRUE,
+      labs          = c("", "", "PRISMA score")
+    )
+    
+    p <- res[[1]] +
+      ggtitle(cfg$header) +
+      theme(plot.title = element_text(face = "bold", hjust = 0.5, size = 10))
+    
+    if (i > 1) p <- p + ylab(NULL)   # only the first sub-panel keeps the y-axis label
+    p
+  })
+  
+  wrap_plots(subplots, nrow = 1)
+}
+
+# --- usage ---
+meta <- load_figure1_data("Figure1/Figure1_metaDat.csv") ###Replace with your path
+ p_c  <- plot_panel_c(meta)
+ p_c
+# ggsave("Fig1/output/panel_c.pdf", p_c, width = 16, height = 3.5)
+
+```
+
+## Panel d
+
+```{r,echo=T,eval=T}
+# ============================================================
+# Fig1/code/panel_d_prisma_response_violins.R
+# Panel D: PRISMA score (continuous) by aggregated response (R/NR),
+# one violin pair per treatment arm.
+# ============================================================
+library(dplyr)
+library(gridExtra)
+
+source("Figure1/00_colors.R")
+source("Figure1/01_load_data.R")
+source("Figure1/utils_plot_group_boxplot.R")
+
+add_agg_response <- function(meta) {
+  # NOTE: preserved verbatim from your original logic — "NE" (non-evaluable)
+  # falls into "NR" here since ifelse() has no third branch. Flagging this:
+  # worth deciding if NE should be NA/excluded instead before this goes final.
+  meta %>%
+    mutate(
+      Agg_response = ifelse(Best_response_L1_RECIST %in% c("PR", "CR"), "R", "NR"),
+      Agg_response = factor(Agg_response, levels = c("R", "NR"))
+    )
+}
+
+plot_panel_d <- function(meta) {
+  
+  meta <- add_agg_response(meta)
+  
+  plots <- lapply(comp_list, function(comp) {
+    melted <- meta %>%
+      filter(arm == comp) %>%
+      melt_df(var_to_group = "Agg_response") %>%
+      na.omit()
+    
+    res <- plot_group_boxplot(
+      data.m        = melted,
+      variable      = "PRISMA_num",
+      violin        = TRUE,
+      hide_test     = FALSE,
+      compare_groups = TRUE,
+      alpha         = 0.5,
+      ylim          = c(-3, 3),
+      plot_outlier  = TRUE,
+      specify_col   = rev(rep_2_colors),
+      size_point    = 0,
+      title_size    = 8,
+      add_jitter    = TRUE,
+      labs          = c("", "", comp)
+    )
+    
+    res[[1]] + theme(plot.title = element_blank())
+  })
+  
+  grid.arrange(grobs = plots, ncol = 1)
+}
+
+# --- usage ---
+meta <- load_figure1_data("Figure1/Figure1_metaDat.csv") ###Replace with your path
+# pdf("Fig1/output/panel_d.pdf", width = 8, height = 12)
+ plot_panel_d(meta)
+# dev.off()
+```
+
+## Panel e
+
+```{r,echo=T,eval=T,fig.width=10,fig.height=18}
+library(dplyr)
+library(patchwork)
+
+source("Figure1/00_colors.R")
+source("Figure1/01_load_data.R")
+source("Figure1/utils_plot_group_boxplot.R") 
+
+plot_panel_e <- function(meta, test_name = "fisher.test") {
+  
+  meta <- add_agg_response(meta)
+  
+  meta <- meta %>%
+    filter(Best_response_L1_RECIST != "NE") %>%          # <- drop NE
+    mutate(Best_response_L1_RECIST = factor(Best_response_L1_RECIST,
+                                            levels = c("CR", "PR", "SD", "PD")))
+  
+  arms <- c("Nivo-Ipi", "Nivo", "TKI")
+  
+  plots_agg <- lapply(arms, function(arm_f) {
+    clin_f <- meta %>% filter(arm == arm_f) %>% as.data.frame()   # <- fix: drop tibble class
+    plot_contingency(clin_f, c("PRISMA", "Agg_response"),
+                     inverse_factor2 = TRUE, labs = c("", "%", "Response"),
+                     create_labels = FALSE, palette = rev(rep_2_colors),
+                     test_name = test_name, title = arm_f)[[1]]
+  })
+  
+  plots_full <- lapply(arms, function(arm_f) {
+    clin_f <- meta %>% filter(arm == arm_f) %>% as.data.frame()   # <- fix: drop tibble class
+    plot_contingency(clin_f, c("PRISMA", "Best_response_L1_RECIST"),
+                     inverse_factor2 = TRUE, labs = c("", "%", "Response"),
+                     create_labels = FALSE, palette = response_colors,
+                     test_name = test_name, title = arm_f)[[1]]
+  })
+  
+  wrap_plots(
+    c(plots_agg[1], plots_full[1], plots_agg[2], plots_full[2], plots_agg[3], plots_full[3]),
+    ncol = 2, nrow = 3
+  )
+}
+
+# --- usage ---
+meta <- load_figure1_data("Figure1/Figure1_metaDat.csv") ###Replace with your path
+# pdf("Fig1/output/panel_e.pdf", width = 10, height = 14)
+ plot_panel_e(meta)
+# dev.off()
+
+```
+
+## Panel f-h
+
+```{r,echo=T,eval=T}
+library(dplyr)
+library(survival)
+library(survminer)
+library(patchwork)
+
+source("Figure1/00_colors.R")
+source("Figure1/01_load_data.R")
+
+# --- fallbacks for undefined theme helpers — REPLACE with your real ones ---
+theme_for_ggsurv <- ggplot2::theme_classic(base_size = 8)   # 
+clean_theme_fn   <- function() survminer::theme_cleantable() # 
+
+surv_vars <- list(
+  PFS = c("PFS", "PFS_status"),
+  OS  = c("OS",  "OS_status"),
+  TST = c("TST", "TST_status")
+)
+comp_list <- c("Nivo-Ipi", "Nivo", "TKI")
+
+#
+prisma_level_order <- c("PRISMA-high", "PRISMA-low")
+
+
+one_km_plot <- function(data, arm_label, endpoint_label, time_col, event_col,
+                        group_col = "PRISMA", palette_named) {
+  
+  d <- data %>%
+    filter(arm == arm_label) %>%
+    as.data.frame() %>%                       # guard against tibble subsetting bugs
+    select(time = all_of(time_col), alive = all_of(event_col), group = all_of(group_col)) %>%
+    mutate(time = as.numeric(as.character(time)),
+           group = factor(group, levels = prisma_level_order)) %>%
+    na.omit()
+  
+  pal <- unname(palette_named[levels(droplevels(d$group))])  # order-safe lookup by level name
+  
+  fit <- survfit(Surv(time, alive) ~ group, data = d)
+  
+  pl <- ggsurvplot(
+    fit, data = d, pval = FALSE, break.time.by = 10, fun = "pct",
+    palette = pal, conf.int = FALSE, surv.median.line = "hv",
+    legend.labs = levels(droplevels(d$group)),
+    risk.table = FALSE, ggtheme = theme_for_ggsurv,
+    fontsize = 2, tables.theme = clean_theme_fn(), risk.table.title = ""
+  )
+  
+  p_value <- surv_pvalue(fit = fit, data = d)$pval
+  
+  pl$plot <- pl$plot +
+    ylab(paste0("% ", arm_label)) + xlab("Months") +
+    ggtitle(paste0("n= ", nrow(d), "\n", endpoint_label)) +
+    theme(legend.position = "none")
+  
+  medians <- sort(surv_median(fit)$median)
+  label_y_positions <- 4
+  pl$plot <- pl$plot +
+    annotate("label", x = medians + c(-2, 2), y = label_y_positions,
+             label = round(medians, 2), colour = pal, size = 2) +
+    annotate("text", x = 30, y = 100, size = 3.5,
+             label = paste0("p = ", round(p_value, 4)))
+  
+  pl$plot
+}
+
+plot_panel_fgh <- function(meta) {
+  
+  all_plots <- lapply(comp_list, function(comp) {
+    lapply(names(surv_vars), function(ep) {
+      one_km_plot(
+        data           = meta,
+        arm_label      = comp,
+        endpoint_label = ep,
+        time_col       = surv_vars[[ep]][1],
+        event_col      = surv_vars[[ep]][2],
+        palette_named  = c(
+          "PRISMA-high" = unname(survival_hilo_colors[[comp]]["High"]),
+          "PRISMA-low"  = unname(survival_hilo_colors[[comp]]["Low"])
+        )
+      )
+    })
+  }) %>% unlist(recursive = FALSE)
+  
+  wrap_plots(all_plots, ncol = 3, nrow = 3)
+}
+
+# --- usage ---
+meta <- load_figure1_data("Figure1/Figure1_metaDat.csv") 
+# pdf("Fig1/output/panel_fgh.pdf", width = 12, height = 10)
+ plot_panel_fgh(meta)
+# dev.off()
+```
+
+## Rsession
+
+```{r,echo=T,eval=T}
+sessionInfo()
+```

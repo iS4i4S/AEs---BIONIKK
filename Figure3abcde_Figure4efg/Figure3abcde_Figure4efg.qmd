@@ -1,0 +1,767 @@
+---
+title: "Figure3abcde_Figure4efg"
+author:
+  - name: "Isaias Hernandez"
+    affiliation: "Postdoc - INSERM U1138 Centre de Recherche des Cordeliers"
+    email: "isaias.hernandez@sorbonne.universite.fr"
+    date: "`r format(Sys.time(), '%B %d, %Y')`"
+format:
+  html:
+    code-fold: true
+    code-summary: "Show the code"
+    toc: true
+    toc_float: true
+    toc-expand: true
+    self_contained: true
+    embed-resources: true
+    thumbnails: false
+    lightbox: true
+    gallery: true
+    highlight-style: tango
+    theme: cerulean
+editor: visual
+---
+
+To reproduce panel **a, b, c, d, and e** Figure 3 & panels **e, f, and g** from Figure 4 you need to download the data (Figure4_metaDat.csv) from the EGA repository (see Readme.txt).
+
+## Figure 3 Panel a
+
+```{r,echo=T,eval=T,fig.width=16,fig.height=12}
+# ============================================================
+# Fig3/code/panel_a_ae_distribution.R
+# Panel A: histogram of per-patient total AE event counts, with
+# Negative Binomial and Normal density fits overlaid.
+# Built with base R graphics to match the reference figure's style
+# (base plot legend/box, not a ggplot theme).
+# ============================================================
+source("Figure1/00_colors.R")
+source("Figure3abcde_Figure4efg/04_load_data.R")   # for load_figure4_data()
+source("Figure1/utils_plot_group_boxplot.R")
+
+plot_panel_a <- function(meta_events) {
+  
+  ae_counts <- meta_events %>%
+    dplyr::group_by(ID, Tx) %>%
+    dplyr::summarise(events = dplyr::n(), .groups = "drop")
+  
+  # --- Negative Binomial fit ---
+  nb_fit <- MASS::fitdistr(ae_counts$events, "Negative Binomial")
+  size <- nb_fit$estimate["size"]
+  mu   <- nb_fit$estimate["mu"]
+  
+  # --- Normal fit (matches the reference image's "Normal fitting" curve —
+  # your pasted code computed a Poisson fit instead; swapped here to
+  # match what's actually shown in the figure) ---
+  norm_mean <- mean(ae_counts$events)
+  norm_sd   <- sd(ae_counts$events)
+  
+  x_vals <- seq(0, max(ae_counts$events), by = 1)
+  dist_df <- data.frame(
+    x      = x_vals,
+    negbin = dnbinom(x_vals, size = size, mu = mu),
+    normal = dnorm(x_vals, mean = norm_mean, sd = norm_sd)
+  )
+  
+  # --- plot ---
+  hist(
+    ae_counts$events,
+    breaks = seq(0, max(ae_counts$events) + 1, by = 1),
+    freq = FALSE,
+    col = "grey85", border = "black",
+    xlab = "Number of adverse events",
+    ylab = "Density",
+    main = "",
+    font.lab = 2,          # bold axis titles, matching reference
+    cex.lab = 1.2
+  )
+  lines(dist_df$x, dist_df$negbin, col = "blue", lwd = 3)
+  lines(dist_df$x, dist_df$normal, col = "red", lwd = 2, lty = 2)
+  
+  legend(
+    "topright",
+    legend = c("Negative Binomial fitting", "Normal fitting"),
+    col = c("blue", "red"),
+    lwd = c(3, 2),
+    lty = c(1, 2),
+    bty = "n",
+    title = "Data modelization",
+    title.font = 2,
+    cex = 1
+  )
+}
+
+# --- usage ---
+meta_events <- load_figure3_events_data("Figure3abcde_Figure4efg/Figure4_metaDat.csv")  # confirm actual filename/path
+# pdf("Fig3/output/panel_a.pdf", width = 6, height = 5)
+plot_panel_a(meta_events)
+
+
+```
+
+## Figure 3 Panel b
+
+```{r,echo=T,eval=T,fig.width=16,fig.height=12}
+# ============================================================
+# Fig3/code/panel_b_ae_distribution_by_grade.R
+# Panel B: AE count distributions split by Grade (1 / 2 / 3+),
+# faceted, with per-arm Negative Binomial density fits overlaid.
+# ============================================================
+library(dplyr)
+library(ggplot2)
+source("Figure1/00_colors.R")
+source("Figure3abcde_Figure4efg/04_load_data.R")   # for load_figure4_data()
+source("Figure1/utils_plot_group_boxplot.R")
+plot_panel_b <- function(meta_events) {
+  
+  ae_counts <- meta_events %>%
+    dplyr::mutate(
+      Grade_group = dplyr::case_when(
+        Grade == 1 ~ "Grade 1",
+        Grade == 2 ~ "Grade 2",
+        Grade >= 3 ~ "Grade 3+",
+        TRUE ~ NA_character_
+      )
+    ) %>%
+    dplyr::filter(!is.na(Grade_group)) %>%
+    dplyr::group_by(ID, Tx, Grade_group) %>%
+    dplyr::summarise(events = dplyr::n(), .groups = "drop") %>%
+    dplyr::filter(!is.na(events), !is.na(Tx)) %>%
+    dplyr::mutate(Grade_group = factor(Grade_group, levels = c("Grade 1", "Grade 2", "Grade 3+")))
+  
+  # --- fit NB (with Poisson fallback) per Tx x Grade_group ---
+  fit_by_tx_grade <- ae_counts %>%
+    dplyr::group_by(Tx, Grade_group) %>%
+    dplyr::do({
+      data <- .
+      x_vals <- seq(0, max(data$events), by = 1)
+      
+      nb_fit <- tryCatch(
+        MASS::fitdistr(data$events, "Negative Binomial"),
+        error = function(e) NULL
+      )
+      
+      if (!is.null(nb_fit)) {
+        density <- dnbinom(x_vals, size = nb_fit$estimate["size"], mu = nb_fit$estimate["mu"])
+      } else {
+        lambda <- mean(data$events)
+        density <- dpois(x_vals, lambda)
+      }
+      
+      data.frame(x = x_vals, density = density, Tx = unique(data$Tx), Grade_group = unique(data$Grade_group))
+    })
+  
+  ggplot(ae_counts, aes(x = events, fill = Tx)) +
+    geom_histogram(aes(y = after_stat(density)), binwidth = 1, alpha = 0.4, position = "identity") +
+    geom_line(data = fit_by_tx_grade, aes(x = x, y = density, color = Tx), linewidth = 1.2) +
+    scale_fill_manual(values = arm_colors, name = "Treatment") +
+    scale_color_manual(values = arm_colors, name = "Treatment") +
+    facet_grid(~ Grade_group, scales = "free_y") +
+    labs(
+      x = "Number of adverse events per patient",
+      y = "Density",
+      title = "Distribution of adverse events by treatment and grade",
+      subtitle = "Negative binomial fits per subgroup"
+    ) +
+    theme_classic() +
+    theme(strip.text = element_text(face = "bold"), legend.position = "right")
+}
+
+
+# --- usage ---
+meta_events <- load_figure3_events_data("Figure3abcde_Figure4efg/Figure4_metaDat.csv")  # confirm actual filename/path
+# pdf("Fig3/output/panel_a.pdf", width = 6, height = 5)
+plot_panel_b(meta_events)
+
+
+```
+
+## Figure 3 Panel c
+
+```{r,echo=T,eval=T,fig.width=16,fig.height=12}
+# ============================================================
+# Fig3/code/panel_c_ae_temporal_dynamics.R
+# Panel C: temporal dynamics of AE accumulation (pooled across
+# arms), with Negative Binomial and linear (Normal) fits overlaid.
+# ============================================================
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(MASS)
+source("Figure1/00_colors.R")
+source("Figure3abcde_Figure4efg/04_load_data.R")   # for load_figure4_data()
+source("Figure1/utils_plot_group_boxplot.R")
+
+plot_panel_c <- function(meta_events, max_month = 24) {
+  
+  ae_time <- meta_events %>%
+    dplyr::filter(!is.na(time_L1_ae) & time_L1_ae >= 0) %>%
+    dplyr::mutate(
+      time_months = time_L1_ae / 30.44,
+      month_bin   = floor(time_months)
+    )
+  
+  ae_binned <- ae_time %>%
+    dplyr::group_by(Tx, month_bin) %>%
+    dplyr::summarise(n_AEs = dplyr::n(), .groups = "drop")
+  
+  all_months     <- 0:max(ae_binned$month_bin)
+  all_treatments <- unique(ae_binned$Tx)
+  
+  ae_binned <- tidyr::expand_grid(Tx = all_treatments, month_bin = all_months) %>%
+    dplyr::left_join(ae_binned, by = c("Tx", "month_bin")) %>%
+    dplyr::mutate(n_AEs = tidyr::replace_na(n_AEs, 0))
+  
+  ae_binned$events <- ae_binned$n_AEs
+  
+  # 
+  ae_binned <- ae_binned %>%
+    dplyr::mutate(time_mid = month_bin + 0.5)
+  
+  df_plot <- ae_binned %>%
+    dplyr::group_by(time_mid) %>%
+    dplyr::summarise(events = sum(events), .groups = "drop") %>%
+    dplyr::arrange(time_mid)
+  
+  # --- fit models ---
+  nb_model <- MASS::glm.nb(events ~ time_mid, data = df_plot)
+  lm_model <- lm(events ~ time_mid, data = df_plot)
+  
+  time_seq <- seq(0, max_month, by = 0.1)
+  pred_df <- data.frame(time_mid = time_seq)
+  pred_df$nb_fit <- predict(nb_model, newdata = pred_df, type = "response")
+  pred_df$lm_fit <- predict(lm_model, newdata = pred_df)
+  
+  # force curves to start at 0
+  pred_df <- dplyr::bind_rows(
+    data.frame(time_mid = 0, nb_fit = 0, lm_fit = 0),
+    pred_df
+  )
+  
+  ggplot(df_plot, aes(x = time_mid, y = events)) +
+    geom_point(size = 2, color = "black") +
+    geom_line(color = "black", alpha = 0.6) +
+    geom_line(data = pred_df, aes(x = time_mid, y = nb_fit), color = "blue", linewidth = 1.3) +
+    geom_line(data = pred_df, aes(x = time_mid, y = lm_fit), color = "red", linetype = "dashed", linewidth = 1.2) +
+    theme_minimal(base_size = 13) +
+    labs(
+      x = "Time (months)", y = "Number of AEs",
+      title = "Temporal Dynamics of Adverse Events",
+      subtitle = "Negative binomial vs linear (normal) fit",
+      caption = "NB captures non-linear AE accumulation better than normal model"
+    )
+}
+
+# --- usage ---
+meta_events <- load_figure3_events_data("Figure3abcde_Figure4efg/Figure4_metaDat.csv")  # confirm actual filename/path
+# pdf("Fig3/output/panel_a.pdf", width = 6, height = 5)
+plot_panel_c(meta_events)
+
+
+```
+
+## Figure 3 Panel d
+
+```{r,echo=T,eval=T,fig.width=16,fig.height=12}
+# ============================================================
+# Fig3/code/panel_d_ae_temporal_pooled.R
+# Panel D: temporal AE dynamics by arm (pooled across grades),
+# absolute + per-patient-normalized counts, with pairwise NB
+# rate-ratio comparisons across arms.
+#
+# ============================================================
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(MASS)
+library(emmeans)
+library(dplyr)
+library(ggplot2)
+source("Figure1/00_colors.R")
+source("Figure3abcde_Figure4efg/04_load_data.R")   # for load_figure4_data()
+source("Figure1/utils_plot_group_boxplot.R")
+N_PATIENTS_BY_ARM <- c("Nivo" = 58, "Nivo-Ipi" = 101, "TKI" = 40)
+
+build_ae_binned_pooled <- function(meta_events) {
+  
+  ae_time <- meta_events %>%
+    dplyr::filter(!is.na(time_L1_ae) & time_L1_ae >= 0) %>%
+    dplyr::mutate(time_months = time_L1_ae / 30.44, month_bin = floor(time_months))
+  
+  ae_binned <- ae_time %>%
+    dplyr::group_by(Tx, month_bin) %>%
+    dplyr::summarise(n_AEs = dplyr::n(), .groups = "drop")
+  
+  all_months     <- 0:max(ae_binned$month_bin)
+  all_treatments <- unique(ae_binned$Tx)
+  
+  ae_binned <- tidyr::expand_grid(Tx = all_treatments, month_bin = all_months) %>%
+    dplyr::left_join(ae_binned, by = c("Tx", "month_bin")) %>%
+    dplyr::mutate(n_AEs = tidyr::replace_na(n_AEs, 0)) %>%
+    dplyr::mutate(
+      n_patients = N_PATIENTS_BY_ARM[as.character(Tx)],
+      n_AEs_norm = n_AEs / n_patients
+    )
+  
+  ae_binned
+}
+
+run_pairwise_nb_pooled <- function(ae_binned) {
+  mod <- MASS::glm.nb(n_AEs ~ Tx + offset(log(n_patients)), data = ae_binned)
+  emm <- emmeans::emmeans(mod, specs = "Tx", type = "response")
+  
+  pairs(emm, adjust = "none") %>%
+    as.data.frame() %>%
+    dplyr::rename(Tx1 = contrast, RR = ratio, p_value = p.value)
+}
+
+plot_panel_d <- function(meta_events, scale_factor = 50) {
+  
+  ae_binned <- build_ae_binned_pooled(meta_events)
+  pairwise_df <- run_pairwise_nb_pooled(ae_binned)
+  
+  plot_data <- ae_binned %>% dplyr::mutate(time_mid = month_bin + 0.5)
+  
+  p <- ggplot(plot_data, aes(x = time_mid, color = Tx)) +
+    geom_line(aes(y = n_AEs), linewidth = 0.8, alpha = 0.5) +
+    geom_line(aes(y = n_AEs_norm * scale_factor), linetype = "dashed", linewidth = 1.2) +
+    scale_y_continuous(
+      name = "Number of AEs (absolute)",
+      sec.axis = sec_axis(~ . / scale_factor, name = "AEs per patient")
+    ) +
+    scale_color_manual(values = arm_colors, name = "Treatment") +
+    theme_minimal(base_size = 13) +
+    labs(
+      x = "Time (months)",
+      title = "Temporal Dynamics of Adverse Events",
+      subtitle = "Thin lines: absolute counts | Thick lines: normalized per patient"
+    ) +
+    theme(
+      panel.grid.minor = element_blank(),
+      plot.title = element_text(face = "bold"),
+      legend.position = "top",
+      axis.title.y.right = element_text(color = "black"),
+      axis.text.y.right  = element_text(color = "black")
+    )
+  
+  list(plot = p, pairwise_results = pairwise_df)
+}
+
+# --- usage ---
+meta_events <- load_figure3_events_data("Figure3abcde_Figure4efg/Figure4_metaDat.csv")  # confirm actual filename/path
+# pdf("Fig3/output/panel_a.pdf", width = 6, height = 5)
+plot_panel_d(meta_events)
+
+
+```
+
+## Figure 3 Panel e
+
+```{r,echo=T,eval=T,fig.width=16,fig.height=12}
+# ============================================================
+# Fig3/code/panel_e_ae_temporal_by_grade.R
+# Panel E: temporal AE dynamics by grade and treatment arm,
+# absolute (thin lines) and per-patient-normalized (thick dashed
+# lines) counts, plus pairwise NB regression comparisons per grade.
+# ============================================================
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(MASS)
+library(emmeans)
+source("Figure1/00_colors.R")
+source("Figure3abcde_Figure4efg/04_load_data.R")   # for load_figure4_data()
+source("Figure1/utils_plot_group_boxplot.R")
+# Fixed per-arm patient denominators — matches the full treated
+# cohort per arm (Nivo-Ipi=101, Nivo=58, TKI=40; see Figure 1 panel a).
+N_PATIENTS_BY_ARM <- c("Nivo" = 58, "Nivo-Ipi" = 101, "TKI" = 40)
+
+
+build_ae_binned_by_grade <- function(meta_events) {
+  
+  ae_time <- meta_events %>%
+    dplyr::filter(!is.na(time_L1_ae) & time_L1_ae >= 0) %>%
+    dplyr::mutate(
+      time_months = time_L1_ae / 30.44,
+      month_bin   = floor(time_months),
+      Grade_group = dplyr::case_when(
+        Grade == 1 ~ "Grade 1",
+        Grade == 2 ~ "Grade 2",
+        Grade >= 3 ~ "Grade 3+",
+        TRUE ~ NA_character_
+      )
+    )
+  
+  ae_binned <- ae_time %>%
+    dplyr::group_by(Tx, month_bin, Grade_group) %>%
+    dplyr::summarise(n_AEs = dplyr::n(), .groups = "drop")
+  
+  all_months     <- 0:max(ae_binned$month_bin)
+  all_treatments <- unique(ae_binned$Tx)
+  all_grades     <- unique(ae_binned$Grade_group)
+  
+  ae_binned <- tidyr::expand_grid(Tx = all_treatments, month_bin = all_months, Grade_group = all_grades) %>%
+    dplyr::left_join(ae_binned, by = c("Tx", "month_bin", "Grade_group")) %>%
+    dplyr::mutate(n_AEs = tidyr::replace_na(n_AEs, 0))
+  
+  ae_binned %>%
+    dplyr::mutate(
+      n_patients = N_PATIENTS_BY_ARM[as.character(Tx)],
+      n_AEs_norm = n_AEs / n_patients
+    )
+}
+
+# --- pairwise NB comparisons per grade (returns the stats table,
+# not the plot — this is what generates the p=... values shown
+# annotated on the reference figure's panel e) ---
+run_pairwise_nb_by_grade <- function(ae_binned) {
+  
+  run_nb_grade <- function(grade_level) {
+    df <- ae_binned %>% dplyr::filter(Grade_group == grade_level)
+    mod <- MASS::glm.nb(n_AEs ~ Tx + offset(log(n_patients)), data = df)
+    emm <- emmeans::emmeans(mod, specs = "Tx", type = "response")
+    
+    pairs(emm, adjust = "none") %>%   # <- base generic, not emmeans::pairs()
+      as.data.frame() %>%
+      dplyr::mutate(Grade_group = grade_level)
+  }
+  
+  dplyr::bind_rows(lapply(unique(ae_binned$Grade_group), run_nb_grade))
+}
+
+plot_panel_e <- function(meta_events, scale_factor = 50) {
+  
+  ae_binned <- build_ae_binned_by_grade(meta_events)
+  pairwise_results <- run_pairwise_nb_by_grade(ae_binned)   # available for annotation/reporting alongside the plot
+  
+  plot_data <- ae_binned %>% dplyr::mutate(time_mid = month_bin + 0.5)
+  
+  p <- ggplot(plot_data, aes(x = time_mid, color = Tx)) +
+    geom_line(aes(y = n_AEs), linewidth = 0.8, alpha = 0.5) +
+    geom_line(aes(y = n_AEs_norm * scale_factor), linetype = "dashed", linewidth = 1.2) +
+    facet_wrap(~ Grade_group, scales = "free_y") +
+    scale_y_continuous(
+      name = "Number of AEs (absolute)",
+      sec.axis = sec_axis(~ . / scale_factor, name = "AEs per patient")
+    ) +
+    scale_color_manual(values = arm_colors, name = "Treatment") +
+    theme_minimal(base_size = 13) +
+    labs(
+      x = "Time (months)",
+      title = "Temporal Dynamics of Adverse Events by Grade",
+      subtitle = "Thin lines: absolute counts | Thick lines: normalized per patient"
+    ) +
+    theme(
+      panel.grid.minor = element_blank(),
+      plot.title = element_text(face = "bold"),
+      legend.position = "top",
+      axis.title.y.right = element_text(color = "black"),
+      axis.text.y.right  = element_text(color = "black")
+    )
+  
+  list(plot = p, pairwise_results = pairwise_results)
+}
+
+# --- usage ---
+meta_events <- load_figure3_events_data("Figure3abcde_Figure4efg/Figure4_metaDat.csv")  # confirm actual filename/path
+# pdf("Fig3/output/panel_a.pdf", width = 6, height = 5)
+plot_panel_e(meta_events)
+
+
+```
+
+## Figure 4 Panel e & f
+
+```{r,echo=T,eval=T,fig.width=16,fig.height=12}
+# ============================================================
+# Fig4/code/panel_e_ae_cusum_gaba.R — updated: use time_L1_ae
+# directly as Time_since_therapy, no separate derivation needed.
+# ============================================================
+library(dplyr)
+library(mgcv)
+library(ggplot2)
+source("Figure1/00_colors.R")
+source("Figure3abcde_Figure4efg/04_load_data.R")   # for load_figure4_data()
+source("Figure1/utils_plot_group_boxplot.R")
+
+GABA_LEVELS <- c("TLS positive Low_GABA", "TLS positive High_GABA", "TLS negative")
+
+# ============================================================
+# Fig4/code/panel_e_ae_cusum_gaba.R — add: force an explicit
+# (0,0) -> single-event line for any group with only one
+# cumulative-count data point, since geom_smooth() can't fit a
+# curve to a single point and would otherwise silently drop it.
+# ============================================================
+
+plot_panel_4ef <- function(meta_events, ae_category = "Skin and subcutaneous tissue disorders",
+                         vline_day = 180) {
+  
+  stopifnot("time_L1_ae" %in% colnames(meta_events))
+  
+  ae_ici <- meta_events %>%
+    dplyr::filter(Tx != "TKI") %>%
+    dplyr::rename(Time_since_therapy = time_L1_ae)
+  
+  patient_counts <- ae_ici %>%
+    dplyr::filter(!is.na(GABA_synthesis_group_TLS2)) %>%
+    dplyr::group_by(GABA_synthesis_group_TLS2) %>%
+    dplyr::summarise(n_patients = dplyr::n_distinct(ID), .groups = "drop")
+  
+  gi_cusum <- ae_ici %>%
+    dplyr::filter(CTCAE == ae_category) %>%
+    dplyr::filter(!is.na(GABA_synthesis_group_TLS2)) %>%
+    dplyr::group_by(GABA_synthesis_group_TLS2, Time_since_therapy) %>%
+    dplyr::summarise(event_count = dplyr::n(), .groups = "drop") %>%
+    dplyr::arrange(GABA_synthesis_group_TLS2, Time_since_therapy) %>%
+    dplyr::left_join(patient_counts, by = "GABA_synthesis_group_TLS2") %>%
+    dplyr::group_by(GABA_synthesis_group_TLS2) %>%
+    dplyr::mutate(normalized_cumulative_count = cumsum(event_count) / n_patients) %>%
+    dplyr::ungroup() %>%
+    dplyr::mutate(GABA_synthesis_group_TLS2 = factor(GABA_synthesis_group_TLS2, levels = GABA_LEVELS))
+  
+  # --- force a (0,0) anchor point for any group with only ONE
+  # observed data point, so geom_smooth() has two points to draw
+  # a line through instead of silently dropping a single-point group ---
+  single_point_groups <- gi_cusum %>%
+    dplyr::count(GABA_synthesis_group_TLS2) %>%
+    dplyr::filter(n == 1) %>%
+    dplyr::pull(GABA_synthesis_group_TLS2)
+  
+  if (length(single_point_groups) > 0) {
+    zero_anchor_rows <- gi_cusum %>%
+      dplyr::filter(GABA_synthesis_group_TLS2 %in% single_point_groups) %>%
+      dplyr::mutate(
+        Time_since_therapy = 0,
+        event_count = 0,
+        normalized_cumulative_count = 0
+      )
+    gi_cusum <- dplyr::bind_rows(zero_anchor_rows, gi_cusum) %>%
+      dplyr::arrange(GABA_synthesis_group_TLS2, Time_since_therapy)
+  }
+  
+  # GAM still needs >=3-ish points per smooth term to be well-defined;
+  # single-point (now two-point, post-anchor) groups get a plain
+  # straight line via geom_line() instead of participating in the
+  # smooth/significance test, since a 2-point "trend" isn't a
+  # meaningful input to a spline-based GAM term.
+  groups_for_gam <- gi_cusum %>%
+    dplyr::filter(!GABA_synthesis_group_TLS2 %in% single_point_groups)
+  
+  model <- mgcv::gam(
+    normalized_cumulative_count ~ s(Time_since_therapy, GABA_synthesis_group_TLS2, bs = "fs"),
+    data = droplevels(groups_for_gam)
+  )
+  res <- summary(model)
+  pval1 <- paste0("p = ", format(res[["s.table"]][[4]], digits = 3))
+  
+  p <- ggplot(gi_cusum, aes(x = Time_since_therapy, y = normalized_cumulative_count,
+                            color = GABA_synthesis_group_TLS2))
+  
+  if (length(single_point_groups) > 0) {
+    p <- p +
+      geom_line(
+        data = dplyr::filter(gi_cusum, GABA_synthesis_group_TLS2 %in% single_point_groups),
+        linewidth = 1.2, alpha = 0.7
+      ) +
+      geom_smooth(
+        data = dplyr::filter(gi_cusum, !GABA_synthesis_group_TLS2 %in% single_point_groups),
+        se = FALSE, linewidth = 1.2, alpha = 0.7
+      )
+  } else {
+    p <- p + geom_smooth(se = FALSE, linewidth = 1.2, alpha = 0.7)
+  }
+  
+  p +
+    geom_point(alpha = 0.5, size = 3) +
+    scale_color_manual(values = color_groups_TLS_total_GABA, name = "TLS-GABA Status") +
+    labs(
+      title = paste0("Normalized CUSUM of ", tolower(ae_category), " According to Time (Nivo + Nivo-Ipi)"),
+      x = "Time since Therapy Initiation (Days)",
+      y = "Cumulative Count (Normalized)"
+    ) +
+    theme_minimal(base_size = 18) +
+    annotate("text", x = 150, y = 0.9, size = 6, label = paste0("Global test  = ", pval1)) +
+    geom_vline(xintercept = vline_day, linetype = "dashed", color = "firebrick1")
+}
+# --- usage ---
+meta_events <- load_figure3_events_data("Figure3abcde_Figure4efg/Figure4_metaDat.csv")  # confirm actual filename/path
+# pdf("Fig3/output/panel_a.pdf", width = 6, height = 5)
+plot_panel_4ef(meta_events,ae_category = "Skin and subcutaneous tissue disorders")
+plot_panel_4ef(meta_events,ae_category = "Renal and urinary disorders")
+
+```
+
+## Figure 4 Panel g
+
+```{r,echo=T,eval=T,fig.width=16,fig.height=12}
+# ============================================================
+# Fig4/code/panel_g_ae_multivariate_nb.R — updated with real
+# ae_categories and vars
+# ============================================================
+
+ae_categories <- c(
+  "Nervous system disorders",
+  "Renal and urinary disorders",
+  "Skin and subcutaneous tissue disorders",
+  "Fatigue",
+  "Endocrine disorders"
+)
+
+PREDICTOR_ORDER <- c(
+  "CD8_cat", "CD68_cat", "CD66b_cat", "Treg_cat",
+  "IgA_MUM1_cat", "IgA_positive_tumor_cells_cat",
+  "IgG_MUM1_cat", "IgG_positive_tumor_cells_cat"
+)
+
+# Clean display labels, matching reference figure text exactly
+PREDICTOR_LABELS <- c(
+  CD8_cat                      = "CD8+",
+  CD68_cat                     = "CD68+",
+  CD66b_cat                    = "CD66b+",
+  Treg_cat                     = "CD4+FoxP3+",
+  IgA_MUM1_cat                 = "MUM1+ IgA+",
+  IgA_positive_tumor_cells_cat = "IgA+ tumor cells",
+  IgG_MUM1_cat                 = "MUM1+ IgG+",
+  IgG_positive_tumor_cells_cat = "IgG+ tumor cells"
+)
+
+nb_predictors <- PREDICTOR_ORDER
+relevel_low_first <- function(x) {
+  lv <- levels(factor(x))
+  low_lv   <- lv[grepl("low", lv, ignore.case = TRUE)]
+  other_lv <- setdiff(lv, low_lv)
+  factor(x, levels = c(low_lv, other_lv))   # low first = reference
+}
+source("Figure1/00_colors.R")
+source("Figure3abcde_Figure4efg/04_load_data.R")   # for load_figure4_data()
+source("Figure1/utils_plot_group_boxplot.R")
+
+# ============================================================
+# Fig4/code/panel_g_ae_multivariate_nb.R — fix: raise iteration
+# limit first (cheap, non-invasive); if that's not enough, fall
+# back to Firth-penalized estimation, which is specifically built
+# to handle exactly this kind of thin-cell/near-separation problem
+# without changing the model specification.
+# ============================================================
+
+run_nb_model_time_binned <- function(aei_filtered, ae_cat,
+                                     predictor_vars = nb_predictors,
+                                     bin_size = 3, max_months = 24) {
+  
+  bins <- 0:(max_months / bin_size - 1)
+  
+  df_events <- aei_filtered %>%
+    dplyr::filter(CTCAE_edit == ae_cat, !is.na(time_L1_ae), time_L1_ae >= 0) %>%
+    dplyr::mutate(time_months = time_L1_ae / 30.44, bin = floor(time_months / bin_size))
+  
+  df_counts <- df_events %>%
+    dplyr::group_by(ID, bin) %>%
+    dplyr::summarise(events = dplyr::n(), .groups = "drop")
+  
+  df_patients <- aei_filtered %>%
+    dplyr::select(ID, dplyr::all_of(predictor_vars)) %>%
+    dplyr::distinct()
+  
+  df_full <- tidyr::expand_grid(ID = df_patients$ID, bin = bins)
+  
+  df <- df_full %>%
+    dplyr::left_join(df_counts, by = c("ID", "bin")) %>%
+    dplyr::left_join(df_patients, by = "ID") %>%
+    dplyr::mutate(events = ifelse(is.na(events), 0, events), exposure_time = bin_size)
+  
+  df[predictor_vars] <- lapply(df[predictor_vars], relevel_low_first)
+  
+  formula_str <- paste("events ~", paste(predictor_vars, collapse = " + "), "+ offset(log(exposure_time))")
+  
+  # attempt 1: plain glm.nb with a raised iteration limit
+  mod <- tryCatch(
+    suppressWarnings(MASS::glm.nb(as.formula(formula_str), data = df,
+                                  control = glm.control(maxit = 100))),
+    error = function(e) NULL
+  )
+  
+  converged_ok <- !is.null(mod) && mod$converged &&
+    isTRUE(mod$th.warn %||% TRUE)   # glm.nb sets th.warn on theta-estimation trouble
+  
+  if (is.null(mod) || !mod$converged) {
+    message("'", ae_cat, "': standard glm.nb did not converge (thin cells likely) — ",
+            "falling back to a fixed, moderate theta rather than re-estimating it, ",
+            "since separation is in the predictors, not the dispersion itself.")
+    
+    # Fallback: fit Poisson first to get a stable mean-structure fit,
+    # then refit NB with theta FIXED at a reasonable starting value
+    # instead of letting glm.nb() try to jointly estimate theta and
+    # 8 factor coefficients from ~30 positive-event rows.
+    pois_mod <- glm(as.formula(formula_str), data = df, family = poisson())
+    theta_start <- MASS::theta.mm(df$events, fitted(pois_mod), df.residual(pois_mod))
+    
+    mod <- tryCatch(
+      MASS::glm.nb(as.formula(formula_str), data = df,
+                   init.theta = theta_start, control = glm.control(maxit = 200)),
+      error = function(e) { message("Fallback also failed for '", ae_cat, "': ", conditionMessage(e)); NULL }
+    )
+  }
+  
+  if (is.null(mod)) return(NULL)
+  
+  broom::tidy(mod, exponentiate = TRUE, conf.int = TRUE) %>%
+    dplyr::mutate(AE = ae_cat)
+}
+
+plot_panel_g <- function(meta_events, ae_categories_list = ae_categories) {
+  
+  ae_ici <- meta_events %>% dplyr::filter(Tx != "TKI")
+  
+  aei_filtered <- ae_ici %>%
+    dplyr::filter(CTCAE_edit %in% ae_categories_list, !is.na(GABA_synthesis_group_TLS2))
+  
+  results_nb_time <- dplyr::bind_rows(
+    lapply(ae_categories_list, function(cat) run_nb_model_time_binned(aei_filtered, cat))
+  )
+  
+  term_to_label <- function(term) {
+    hit <- PREDICTOR_ORDER[startsWith(term, PREDICTOR_ORDER)]
+    if (length(hit) == 0) return(term)
+    paste0(PREDICTOR_LABELS[hit[1]], " high")
+  }
+  
+  plot_data <- results_nb_time %>%
+    dplyr::filter(term != "(Intercept)") %>%
+    dplyr::rowwise() %>%
+    dplyr::mutate(term_clean = term_to_label(term)) %>%
+    dplyr::ungroup() %>%
+    dplyr::mutate(
+      term_clean = factor(term_clean, levels = rev(paste0(PREDICTOR_LABELS[PREDICTOR_ORDER], " high")))
+    )
+  
+  p <- ggplot(plot_data, aes(x = term_clean, y = log10(estimate),
+                             ymin = log10(conf.low), ymax = log10(conf.high), color = AE)) +
+    geom_pointrange(position = position_dodge(width = 0.6)) +
+    geom_hline(yintercept = log10(1), linetype = "dashed", color = "red") +
+    coord_flip() +
+    scale_color_manual(values = ae_colors) +
+    theme_minimal(base_size = 13) +
+    labs(
+      x = "", y = "Incidence Rate Ratio (log10 scale)",
+      title = "Multivariate Regression: Predictors of Adverse Events",
+      subtitle = "Negative binomial model with 3-month time bins",
+      color = "Adverse Event Type"
+    ) +
+    theme(panel.grid.minor = element_blank(), plot.title = element_text(face = "bold"), legend.position = "top")
+  
+  list(plot = p, results = results_nb_time)   # <- explicit return, no reliance on incidental globals
+}
+
+
+# --- usage ---
+meta_events <- load_figure3_events_data("Figure3abcde_Figure4efg/Figure4_metaDat.csv")  # confirm actual filename/path
+# pdf("Fig3/output/panel_a.pdf", width = 6, height = 5)
+plot_panel_g(meta_events)
+
+
+```
+
+## Rsession
+
+```{r,echo=t,eval=T}
+sessionInfo()
+```

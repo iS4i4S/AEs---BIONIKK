@@ -1,0 +1,545 @@
+---
+title: "Figure2"
+author:
+  - name: "Isaias Hernandez"
+    affiliation: "Postdoc - INSERM U1138 Centre de Recherche des Cordeliers"
+    email: "isaias.hernandez@sorbonne.universite.fr"
+    date: "`r format(Sys.time(), '%B %d, %Y')`"
+format:
+  html:
+    code-fold: true
+    code-summary: "Show the code"
+    toc: true
+    toc_float: true
+    toc-expand: true
+    self_contained: true
+    embed-resources: true
+    thumbnails: false
+    lightbox: true
+    gallery: true
+    highlight-style: tango
+    theme: cerulean
+editor: visual
+---
+
+To reproduce all panels in this figure you need to download the data (Figure2_metaDat.csv) from the EGA repository (see Readme.txt).
+
+## Panel a
+
+```{r, echo=T,eval=T,fig.width=24,fig.height=12}
+
+# ============================================================
+# Fig2/code/Figure2_panelA_complete.R
+#
+# STATUS: Panel A only (IHC marker heatmap, PRISMA-high vs -low).
+library(dplyr)
+library(tidyr)
+library(ComplexHeatmap)
+library(circlize)
+library(pals)
+library(viridis)
+
+source("Figure1/00_colors.R") ###Re-use colors from Figure1
+source("Figure2/02_load_data.R")
+
+#Marker list + Log2FC / p-value computation
+#
+# ------------------------------------------------------------
+
+MARKER_COLS_EXPECTED <- c("CD20", "MUM1 IgG", "MUM1 IgA", "CD3", "CD8",
+                          "Ki67 PD1", "CD163", "CD66b", "CD4 Foxp3",
+                          "CD68", "Lag3", "PD1", "PDL1 IC")
+
+compute_log2fc_and_pvalues <- function(meta, marker_cols, group_col = "PRISMA") {
+  
+  d <- meta %>%
+    distinct(ID, .keep_all = TRUE) %>%
+    select(ID, all_of(group_col), all_of(marker_cols)) %>%
+    pivot_longer(cols = all_of(marker_cols), names_to = "variable", values_to = "value") %>%
+    mutate(value = value + 1) %>%
+    na.omit()
+  
+  stats_per_marker <- sapply(marker_cols, function(m) {
+    v_hi <- d$value[d$variable == m & d[[group_col]] == "PRISMA-high"]
+    v_lo <- d$value[d$variable == m & d[[group_col]] == "PRISMA-low"]
+    log2fc <- log2(median(v_hi, na.rm = TRUE) / median(v_lo, na.rm = TRUE))
+    pval   <- suppressWarnings(wilcox.test(v_hi, v_lo)$p.value)
+    c(log2FC = log2fc, pval = pval)
+  })
+  
+  list(
+    Log2FC_filtered             = stats_per_marker["log2FC", ],
+    pvalues_ihc_prisma_filtered = stats_per_marker["pval", ]
+  )
+}
+
+
+# ------------------------------------------------------------
+# Panel A: IHC marker heatmap
+# ------------------------------------------------------------
+plot_panel_a <- function(meta, min_markers = 7) {
+  
+  marker_cols <- intersect(MARKER_COLS_EXPECTED, colnames(meta))
+  missing <- setdiff(MARKER_COLS_EXPECTED, marker_cols)
+  if (length(missing) > 0) {
+    warning("Marker(s) not found in Figure2_metaDat, excluded: ", paste(missing, collapse = ", "))
+  }
+  
+  # --- 
+  dup_ids <- meta$ID[duplicated(meta$ID)]
+  if (length(dup_ids) > 0) {
+    dup_rows <- meta[meta$ID %in% dup_ids, c("ID", "CollectionType", "LesionCategory", "AnatomicalOrigin")]
+    print(dup_rows[order(dup_rows$ID), ])
+    stop(
+      length(unique(dup_ids)), " error"
+    )
+  }
+  
+  rownames(meta) <- meta$ID
+  
+  n_non_na <- rowSums(!is.na(meta[, marker_cols]))
+  to_keep  <- rownames(meta)[n_non_na > min_markers]
+  
+  mat <- log2(as.matrix(meta[to_keep, marker_cols]) + 1)
+  to_keep_sorted <- to_keep[order(meta[to_keep, "PRISMA"])]
+  mat <- mat[to_keep_sorted, , drop = FALSE]
+  
+  fc_stats <- compute_log2fc_and_pvalues(meta[to_keep, ], marker_cols)
+  Log2FC_filtered             <- fc_stats$Log2FC_filtered[marker_cols]
+  pvalues_ihc_prisma_filtered <- fc_stats$pvalues_ihc_prisma_filtered[marker_cols]
+  
+  bar_cols <- rep(viridis(10)[1], length(pvalues_ihc_prisma_filtered))
+  bar_cols[pvalues_ihc_prisma_filtered < 0.05] <- viridis(10)[10]
+  
+  annotation <- meta[to_keep_sorted, c("PRISMA", "CollectionType", "LesionCategory", "AnatomicalOrigin")]
+  
+  ha_colors <- list(
+    PRISMA           = prisma_ihc_colors,
+    CollectionType   = collection_type_colors,
+    LesionCategory   = lesion_category_colors,
+    AnatomicalOrigin = anatomical_origin_colors,
+    TLS              = tls_cat_colors,
+    TLS_immature     = tls_cat_colors,
+    TLS_PFL          = tls_cat_colors,
+    TLS_SFL          = tls_cat_colors,
+    TLS_NA           = tls_cat_colors
+  )
+  
+  ha_top <- HeatmapAnnotation(
+    simple_anno_size_adjust = TRUE,
+    PRISMA           = annotation$PRISMA,
+    CollectionType   = annotation$CollectionType,
+    LesionCategory   = annotation$LesionCategory,
+    AnatomicalOrigin = annotation$AnatomicalOrigin,
+    TLS              = meta[to_keep_sorted, "tls_cat_TC_IM_new"],
+    TLS_immature     = meta[to_keep_sorted, "Nb_TLS_immature_cat"],
+    TLS_PFL          = meta[to_keep_sorted, "Nb_TLS_PFL_cat"],
+    TLS_SFL          = meta[to_keep_sorted, "Nb_TLS_SFL_cat"],
+    TLS_NA           = meta[to_keep_sorted, "Nb_TLS_NA_cat"],
+    col = ha_colors, border = TRUE, gp = gpar(col = "black", lwd = 0.3)
+  )
+  
+  ha_right <- rowAnnotation(Log2FC = anno_barplot(Log2FC_filtered, gp = gpar(fill = bar_cols)))
+  
+  dend_height <- unit(0.33, "cm")
+  
+  Heatmap(
+    t(scale(mat)), name = "mat",
+    show_column_names = FALSE, clustering_method_rows = "complete",
+    right_annotation = ha_right, top_annotation = ha_top,
+    cluster_rows = TRUE, cluster_columns = TRUE,
+    row_dend_width = dend_height, column_dend_height = dend_height,
+    column_split = annotation$PRISMA, column_gap = unit(3, "mm"),
+    border = TRUE
+  )
+}
+
+
+# ------------------------------------------------------------
+# usage
+# ------------------------------------------------------------
+ meta <- load_figure2_data("Figure2/Figure2_metaDat.csv")
+# pdf("Fig2/output/panel_a.pdf", width = 15, height = 4)
+ plot_panel_a(meta)
+# dev.off()
+
+
+
+```
+
+## Panel b
+
+```{r,echo=T,eval=T}
+# Fig2/code/panel_b_tls_counts.R
+# Panel B: TLS in TC / Total TLS / Immature TLS / Mature TLS,
+# PRISMA-high vs PRISMA-low, log-scaled counts with medians.
+# ============================================================
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggpubr)
+library(scales)
+
+source("Figure1/00_colors.R")
+source("Figure2/02_load_data.R")   # for load_figure2_data()
+source("Figure1/utils_plot_group_boxplot.R")
+
+TLS_VARS <- c("New_TLS_TC", "New_TLS_TC_IM", "Nb_TLS_immature", "Nb_TLS_mature")
+TLS_LABELS <- c("TLS in TC", "Total TLS", "Immature TLS", "Mature TLS")
+
+plot_panel_b <- function(meta) {
+  
+  df_m <- meta %>%
+    distinct(ID, .keep_all = TRUE) %>%    # safety net; Figure2_metaDat is already 1 row/patient
+    select(ID, PRISMA, all_of(TLS_VARS)) %>%
+    pivot_longer(cols = all_of(TLS_VARS), names_to = "variable", values_to = "value") %>%
+    mutate(
+      value      = as.numeric(value),
+      value_log  = value + 1,
+      variable   = factor(variable, levels = TLS_VARS, labels = TLS_LABELS)
+    ) %>%
+    na.omit()
+  
+  color_groups  <- prisma_ihc_colors
+  color_groupsb <- setNames(adjustcolor(color_groups, alpha.f = 0.3), names(color_groups))
+  
+  median_df <- df_m %>%
+    group_by(variable, PRISMA) %>%
+    summarise(
+      median_raw  = median(value, na.rm = TRUE),
+      median_plot = median(value_log, na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  ggplot(df_m, aes(x = PRISMA, y = value_log, color = PRISMA, fill = PRISMA)) +
+    geom_boxplot(width = 0.5, position = position_dodge(width = 0.6),
+                 outlier.colour = NA, alpha = 0.7) +
+    geom_text(data = median_df,
+              aes(x = PRISMA, y = median_plot, label = round(median_raw, 1)),
+              inherit.aes = FALSE, size = 4, fontface = "bold", vjust = -0.5, color = "black") +
+    geom_point(size = 2, alpha = 0.8,
+               position = position_jitterdodge(jitter.width = 0.3, jitter.height = 0, dodge.width = 0.5)) +
+    stat_compare_means(aes(label = after_stat(p.format)), label.x.npc = "center", method = "wilcox.test") +
+    scale_y_continuous(trans = "log10", breaks = base_breaks(), labels = prettyNum) +
+    scale_color_manual(values = color_groups) +
+    scale_fill_manual(values = color_groupsb) +
+    facet_wrap(~ variable, scales = "free_y", nrow = 1) +
+    ylab("Count + 1") + xlab("") +
+    theme_bw() +
+    theme(
+      axis.text.x = element_blank(),
+      axis.text.y = element_text(size = 14, color = "black", face = "bold"),
+      axis.ticks.x = element_blank(),
+      axis.title.y = element_text(size = 14, face = "bold"),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.border = element_blank(),
+      axis.line.x = element_line(linewidth = 0.5, linetype = "solid", color = "black"),
+      axis.line.y = element_line(linewidth = 0.5, linetype = "solid", color = "black"),
+      legend.title = element_blank(),
+      legend.position = "bottom",
+      legend.key = element_blank(),
+      legend.text = element_text(size = 14, face = "bold"),
+      strip.background = element_blank(),
+      strip.text = element_text(size = 14, hjust = 0, face = "bold")
+    ) +
+    guides(color = guide_legend(ncol = 1))
+}
+
+# --- usage ---
+ meta <- load_figure2_data("Figure2/Figure2_metaDat.csv")
+ plot_panel_b(meta)
+```
+
+## Panel c
+
+```{r,echo=T,eval=T,fig.width=16,fig.height=12}
+# ============================================================
+# Fig2/code/panel_c_ihc_response_by_arm.R
+# Panel C: TLS/marker counts by response (R/NR), split by arm,
+# one facet per TLS variable/marker (17 total).
+
+library(dplyr)
+library(ggplot2)
+library(reshape2) 
+
+source("Figure1/00_colors.R")
+source("Figure2/02_load_data.R")   # for load_figure2_data()
+source("Figure1/utils_plot_group_boxplot.R")
+
+TLS_MARKER_VARS_ORDERED <- c(
+  "New_TLS_TC", "New_TLS_TC_IM", "Nb_TLS_immature", "Nb_TLS_mature",
+  "CD20", "MUM1 IgG", "MUM1 IgA", "CD68", "CD163", "CD66b",
+  "CD3", "CD8", "Ki67 PD1", "CD4 Foxp3", "Lag3", "PD1", "PDL1 IC"
+)
+
+plot_panel_c <- function(meta, n_per_row = 7) {
+  
+  df_m <- meta %>%
+    select(all_of(TLS_MARKER_VARS_ORDERED), Agg_response, arm) %>%
+    reshape2::melt(id.vars = c("Agg_response", "arm")) %>%
+    na.omit() %>%
+    mutate(value = value + 1)
+  
+  # variable factor levels to follow TLS_MARKER_VARS_ORDERED automatically,
+  #
+  
+  color_groups  <- setNames(rep_2_colors, c("NR", "R"))          # 
+  color_groupsb <- setNames(adjustcolor(color_groups, alpha.f = 0.3), c("NR", "R"))
+  
+  nr_cluster   <- nlevels(df_m$variable)
+  n_row        <- ceiling(nr_cluster / n_per_row)
+  
+  p_values <- df_m %>%
+    group_by(variable, arm) %>%
+    dplyr::summarise(p_value = wilcox.test(value ~ Agg_response)$p.value, .groups = "drop") %>%
+    mutate(label = ifelse(p_value < 0.05,
+                          paste0("bold('", format.pval(p_value, digits = 2), "')"),
+                          format.pval(p_value, digits = 2)))
+  
+  max_values <- df_m %>%
+    group_by(variable) %>%
+    dplyr::summarise(max_value = max(value) * 1.25, .groups = "drop")
+  
+  label_data <- merge(p_values, max_values, by = "variable")
+  
+  ggplot(df_m, aes(x = arm, y = value, color = Agg_response, shape = arm, fill = Agg_response)) +
+    geom_boxplot(width = 0.5, position = position_dodge(width = 0.6),
+                 outlier.colour = NA, show.legend = FALSE) +
+    geom_point(size = 2, alpha = 0.8,
+               position = position_jitterdodge(jitter.width = 0.3, jitter.height = 0, dodge.width = 0.5)) +
+    theme_bw() +
+    ylab("cells/mm2 or count") + xlab("") +
+    theme(
+      axis.text.x = element_blank(),
+      axis.text.y = element_text(size = 14, color = "black", face = "bold"),
+      axis.ticks.x = element_blank(),
+      axis.title.y = element_text(size = 14, face = "bold"),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.border = element_blank(),
+      axis.line.x = element_line(linewidth = 0.5, linetype = "solid", color = "black"),
+      axis.line.y = element_line(linewidth = 0.5, linetype = "solid", color = "black"),
+      legend.title = element_blank(),
+      legend.position = "right",
+      legend.key = element_blank(),
+      legend.text = element_text(size = 14, face = "bold"),
+      strip.background = element_blank(),
+      strip.text = element_text(size = 14, hjust = 0, face = "bold")
+    ) +
+    scale_y_continuous(trans = "log10", breaks = base_breaks(), labels = prettyNum) +
+    scale_color_manual(values = color_groups) +
+    scale_fill_manual(values = color_groupsb) +
+    facet_wrap(~ variable, scales = "free", nrow = n_row) +
+    guides(shape = guide_legend(override.aes = list(size = 10)),
+           color = guide_legend(ncol = 1, override.aes = list(size = 10))) +
+    geom_text(data = label_data, aes(x = arm, y = max_value, label = label),
+              parse = TRUE, inherit.aes = FALSE)
+}
+
+# --- usage ---
+ meta <- load_figure2_data("Figure2/Figure2_metaDat.csv")
+ plot_panel_c(meta)
+#
+```
+
+## Panel d
+
+```{r,echo=T,eval=T,fig.height=14,fig.width=10}
+# ============================================================
+# Fig2/code/panel_d_gaba_response.R
+# Panel D: response rate by TLS-GABA group, per arm —
+# aggregated (R/NR) and, if available, full RECIST (CR/PR/SD/PD).
+# ============================================================
+source("Figure1/00_colors.R")
+source("Figure2/02_load_data.R")   # for load_figure2_data()
+source("Figure1/utils_plot_group_boxplot.R")
+
+library(patchwork)
+
+GABA_LEVELS <- c("TLS positive Low_GABA", "TLS positive High_GABA", "TLS negative")
+
+plot_panel_d <- function(meta, comp_list = c("Nivo-Ipi", "Nivo", "TKI")) {
+  
+  df <- meta %>%
+    filter(!is.na(GABA_synthesis_group_TLS2)) %>%
+    mutate(GABA_synthesis_group_TLS2 = factor(GABA_synthesis_group_TLS2, levels = GABA_LEVELS)) %>%
+    as.data.frame()
+  
+  
+  plots <- lapply(comp_list, function(comp) {
+    df_arm <- df %>% filter(arm == comp)
+    
+    a <- plot_contingency(df_arm, c("GABA_synthesis_group_TLS2", "Agg_response"),
+                          inverse_factor2 = TRUE, title = paste0("TLS - GABA groups in ", comp),
+                          create_labels = FALSE, palette = rep_2_colors)[[1]]  # STILL UNRESOLVED hex
+    
+   a
+  })
+  
+  wrap_plots(plots, ncol = 1)
+}
+
+# --- usage ---
+ meta <- load_figure2_data("Figure2/Figure2_metaDat.csv")
+ plot_panel_d(meta)
+# ggsave("Fig2/output/panel_d.pdf", p_d, width = 12, height = 14)
+```
+
+## Panel e-g
+
+```{r,echo=T,eval=T,fig.height=12,fig.width=14}
+library(dplyr)
+library(survival)
+library(survminer)
+library(patchwork)
+
+source("Figure1/00_colors.R")
+source("Figure2/02_load_data.R")   # for load_figure2_data()
+source("Figure1/utils_plot_group_boxplot.R")
+GABA_LEVELS <- c("TLS positive Low_GABA", "TLS positive High_GABA", "TLS negative")
+
+# --- 
+theme_for_ggsurv <- ggplot2::theme_classic(base_size = 8)   # 
+clean_theme_fn   <- function() survminer::theme_cleantable() # 
+
+surv_vars <- list(
+  PFS = c("PFS", "PFS_status"),
+  OS  = c("OS",  "OS_status"),
+  TST = c("TST", "TST_status")
+)
+comp_list <- c("Nivo-Ipi", "Nivo", "TKI")
+
+declutter_1d<-function(x, min_gap) {
+  if (length(x) <= 1) return(x)
+  ord <- order(x)
+  xs  <- x[ord]
+  for (i in 2:length(xs)) {
+    if (xs[i] - xs[i - 1] < min_gap) {
+      xs[i] <- xs[i - 1] + min_gap
+    }
+  }
+  xs <- xs + (mean(x) - mean(xs))   # re-center so the cluster doesn't drift
+  result <- numeric(length(x))
+  result[ord] <- xs
+  result
+}
+
+one_km_plot<-function(data, arm_label, endpoint_label, time_col, event_col,
+         group_col = "PRISMA", palette_named) {
+  
+  d <- data %>%
+    filter(arm == arm_label) %>%
+    as.data.frame() %>%
+    select(time = all_of(time_col), alive = all_of(event_col), group = all_of(group_col)) %>%
+    mutate(time = as.numeric(as.character(time)),
+           group = factor(group, levels = names(palette_named))) %>%
+    na.omit()
+  
+  pal <- unname(palette_named[levels(droplevels(d$group))])
+  
+  fit <- survfit(Surv(time, alive) ~ group, data = d)
+  
+  pl <- ggsurvplot(
+    fit, data = d, pval = FALSE, break.time.by = 10, fun = "pct",
+    palette = pal, conf.int = FALSE, surv.median.line = "hv",
+    legend.labs = levels(droplevels(d$group)),
+    risk.table = FALSE, ggtheme = theme_for_ggsurv,
+    fontsize = 2, tables.theme = clean_theme_fn(), risk.table.title = ""
+  )
+  
+  p_value <- surv_pvalue(fit = fit, data = d)$pval
+  
+  pl$plot <- pl$plot +
+    ylab(paste0("% ", arm_label)) + xlab("Months") +
+    ggtitle(paste0("n= ", nrow(d), "\n", endpoint_label)) +
+    theme(legend.position = "none")
+  
+  # --- median labels: colour matched by GROUP NAME (fix), position
+  # 
+  med_tab <- surv_median(fit)
+  med_tab$group  <- sub("^group=", "", med_tab$strata)
+  med_tab <- med_tab[!is.na(med_tab$median), ]      # drop groups whose curve never hits 50%
+  med_tab$colour <- palette_named[med_tab$group]     # <- THE FIX: name-keyed, not position-keyed
+  
+  if (nrow(med_tab) > 0) {
+    x_range <- diff(range(d$time, na.rm = TRUE))
+    min_gap <- x_range * 0.06   # 6% of this panel's own x-range
+    med_tab$x_label <- declutter_1d(med_tab$median, min_gap)
+    
+    pl$plot <- pl$plot +
+      geom_label(
+        data = med_tab,
+        aes(x = x_label, y = 4, label = round(median, 2)),
+        inherit.aes = FALSE,
+        colour = med_tab$colour,
+        size = 2,
+        label.padding = grid::unit(0.15, "lines")   # 
+      )
+  }
+  
+  pl$plot <- pl$plot +
+    annotate("text", x = 30, y = 100, size = 3.5,
+             label = paste0("p = ", round(p_value, 4)))
+  
+  pl$plot
+}
+
+
+library(cowplot)   # for get_legend()
+
+build_gaba_legend <- function(palette_named) {
+  dummy_df <- data.frame(
+    group = factor(names(palette_named), levels = names(palette_named)),
+    x = 1, y = 1
+  )
+  
+  legend_plot <- ggplot(dummy_df, aes(x = x, y = y, colour = group)) +
+    geom_point(size = 3) +
+    scale_colour_manual(values = palette_named, name = NULL) +
+    theme_void() +
+    theme(
+      legend.position = "bottom",
+      legend.text = element_text(size = 9)
+    ) +
+    guides(colour = guide_legend(override.aes = list(size = 4)))
+  
+  cowplot::get_legend(legend_plot)
+}
+
+
+plot_panel_efg <- function(meta, comp_list = c("Nivo-Ipi", "Nivo", "TKI")) {
+  
+  meta <- meta %>%
+    filter(!is.na(GABA_synthesis_group_TLS2)) %>%
+    mutate(GABA_synthesis_group_TLS2 = factor(GABA_synthesis_group_TLS2, levels = GABA_LEVELS))
+  
+  all_plots <- lapply(comp_list, function(comp) {
+    lapply(names(surv_vars), function(ep) {
+      one_km_plot(
+        data = meta, arm_label = comp, endpoint_label = ep,
+        time_col = surv_vars[[ep]][1], event_col = surv_vars[[ep]][2],
+        group_col = "GABA_synthesis_group_TLS2",
+        palette_named = gaba_group_colors
+      )
+    })
+  }) %>% unlist(recursive = FALSE)
+  
+  grid <- wrap_plots(all_plots, ncol = 3, nrow = length(comp_list))
+  legend_grob <- build_gaba_legend(gaba_group_colors)
+  
+  grid / patchwork::wrap_elements(full = legend_grob) +
+    plot_layout(heights = c(20, 1))   # legend strip is thin relative to the 3x3 grid
+}
+
+# --- usage ---
+ meta <- load_figure2_data("Figure2/Figure2_metaDat.csv")
+# pdf("Fig2/output/panel_efg.pdf", width = 20, height = 8, onefile = TRUE)
+plot_panel_efg(meta)
+```
+
+## Rsession
+
+```{r,echo=T,eval=T}
+sessionInfo()
+```

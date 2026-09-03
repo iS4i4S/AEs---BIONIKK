@@ -1,0 +1,541 @@
+---
+title: "Figure3f_Figure4abcd"
+author:
+  - name: "Isaias Hernandez"
+    affiliation: "Postdoc - INSERM U1138 Centre de Recherche des Cordeliers"
+    email: "isaias.hernandez@sorbonne.universite.fr"
+    date: "`r format(Sys.time(), '%B %d, %Y')`"
+format:
+  html:
+    code-fold: true
+    code-summary: "Show the code"
+    toc: true
+    toc_float: true
+    toc-expand: true
+    self_contained: true
+    embed-resources: true
+    thumbnails: false
+    lightbox: true
+    gallery: true
+    highlight-style: tango
+    theme: cerulean
+editor: visual
+---
+
+To reproduce panel **f** Figure 3 & panels **a, b, c, and d** from Figure 4 you need to download the data (Figure3_metaDat.csv) from the EGA repository (see Readme.txt).
+
+## Figure 3 Panel f
+
+```{r,echo=T,eval=T,fig.width=16,fig.height=12}
+# ============================================================
+# Fig3/code/panel_f_ae_volcano.R
+# Panel F: volcano plot of HR estimates (OS/PFS/TST) for AE
+# burden/category variables, optimal-cutpoint dichotomized, by arm.
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(scales)
+library(rlang)
+source("Figure1/00_colors.R")
+source("Figure3f_Figure4abcd/03_load_data.R")   # for load_figure3_data()
+source("Figure1/utils_plot_group_boxplot.R")
+
+AE_SIGNATURES <- c(
+  "Total_AEs", "n_Events_Grade_1", "n_Events_Grade_2", "n_Events_Grade3or_more",
+  "Blood and lymphatic system disorders", "Endocrine disorders", "Fatigue",
+  "Gastrointestinal disorders", "Metabolism and nutrition disorders",
+  "Musculoskeletal and connective tissue disorders", "Nervous system disorders",
+  "Renal and urinary disorders", "Respiratory, thoracic and mediastinal disorders",
+  "Skin and subcutaneous tissue disorders"
+)
+
+SURV_VARS <- list(
+  OS  = c("OS",  "OS_status"),
+  PFS = c("PFS", "PFS_status"),
+  TST = c("TST", "TST_status")
+)
+
+TLS_ARM_LIST <- c("Nivo-Ipi", "Nivo", "TKI")
+
+# ------------------------------------------------------------
+
+# ------------------------------------------------------------
+# Run the cutpoint analysis across every arm x endpoint combo,
+# collapsing the original triple copy-pasted loop into one.
+# ------------------------------------------------------------
+compute_hr_results <- function(meta, vars = AE_SIGNATURES,
+                               arms = TLS_ARM_LIST, surv_vars = SURV_VARS) {
+  
+  all_results <- lapply(names(surv_vars), function(ep) {
+    time_sym  <- sym(surv_vars[[ep]][1])    # e.g. sym("OS")
+    event_sym <- sym(surv_vars[[ep]][2])    # e.g. sym("OS_status")
+    
+    ep_results <- lapply(arms, function(z) {
+      subset_clinical <- meta[meta$arm == z, ]
+      
+      res <- run_survival_cutpoint_analysis(
+        data        = subset_clinical,
+        time_col    = !!time_sym,    # correctly captured by enquo() inside the function
+        event_col   = !!event_sym,
+        vars        = vars,
+        multivariable = FALSE,
+        minprop     = 0.2,
+        cut_method  = c("optimal")
+      )
+      
+      res$results$Clinical_variable <- ep
+      res$results$Arm <- z
+      res$results
+    })
+    bind_rows(ep_results)
+  })
+  
+  bind_rows(all_results)
+}
+
+# ------------------------------------------------------------
+# Volcano plot
+# ------------------------------------------------------------
+plot_panel_f <- function(meta, save_rds_path = NULL) {
+  
+  HR_results_all <- compute_hr_results(meta)
+  
+  if (!is.null(save_rds_path)) saveRDS(HR_results_all, save_rds_path)
+  
+  df <- HR_results_all %>%
+    mutate(
+      logp  = -log10(P_value),
+      Group2 = ifelse(P_value > 0.05, "N.S.", Arm),
+      lab    = ifelse(P_value < 0.05, Variable, ""),
+      shape  = case_when(
+        Clinical_variable == "OS"  ~ 19,
+        Clinical_variable == "PFS" ~ 15,
+        Clinical_variable == "TST" ~ 17
+      )
+    )
+  
+  p_cutoff  <- 0.05
+  hr_cutoff <- 1
+  
+  ggplot(df, aes(x = HR, y = logp)) +
+    ylim(0, 8) +
+    geom_point(aes(color = Group2, size = Cutoff_percentile, shape = Clinical_variable), alpha = 0.8) +
+    scale_color_manual(values = volcano_arm_colors, name = "Arm group") +
+    scale_size_continuous(
+      name = "Percentile cutoff", range = c(1, 10), limits = c(0, 100),
+      breaks = c(0, 25, 50, 75, 100), labels = function(x) paste0(x, "%")
+    ) +
+    geom_vline(xintercept = hr_cutoff, linetype = "dashed", color = "grey30") +
+    geom_hline(yintercept = -log10(p_cutoff), linetype = "dashed", color = "grey30") +
+    geom_text_repel(
+      data = subset(df, lab != ""), aes(label = lab),
+      size = 3.5, fontface = "bold", max.overlaps = 30,
+      box.padding = 0.5, segment.size = 0.5
+    ) +
+    labs(
+      title = "Volcano plot HR estimates on OS, PFS & TST using AEs variables",
+      subtitle = "Group comparison",
+      x = "Hazard-ratio", y = expression(-log[10](p - value))
+    ) +
+    theme_minimal(base_size = 14) +
+    theme(legend.position = "right", legend.box = "vertical")
+}
+
+# --- usage ---
+ meta <- load_figure3_data("Figure3f_Figure4abcd/Figure3_metaDat.csv")
+plot_panel_f(meta, save_rds_path = NULL)
+
+
+```
+
+## Figure 4 Panel a
+
+```{r,echo=T,eval=T,fig.height=14,fig.width=10}
+# ============================================================
+# Fig4/code/panel_a_ae_grade_response.R
+# Panel A: AE counts by grade (1/2/3+), split by response (R/NR)
+# and arm.
+# ============================================================
+library(dplyr)
+library(reshape2)
+library(ggplot2)
+library(ggpubr)
+source("Figure1/00_colors.R")
+source("Figure3f_Figure4abcd/03_load_data.R")   # for load_figure3_data()
+source("Figure1/utils_plot_group_boxplot.R")
+
+plot_panel_a <- function(meta) {
+  
+  df_m <- meta %>%
+    distinct(ID, .keep_all = TRUE) %>%
+    mutate(n_Events_Gradeover3 = n_Events_Grade3or_more) %>%   # already collapsed upstream — see note above
+    select(n_Events_Grade_1, n_Events_Grade_2, n_Events_Gradeover3, Agg_response, arm, ID) %>%
+    reshape2::melt(id.vars = c("Agg_response", "arm", "ID")) %>%
+    na.omit() %>%
+    group_by(Agg_response, arm, variable, ID) %>%
+    summarise(total_value = sum(value, na.rm = TRUE), .groups = "drop") %>%
+    mutate(
+      Grade = variable,
+      value = total_value,
+      Agg_response = factor(Agg_response, levels = c("R", "NR"))
+    )
+  
+  color_groups  <- setNames(rep_2_colors, c("NR", "R"))
+  color_groupsb <- setNames(adjustcolor(color_groups, alpha.f = 0.3), c("NR", "R"))
+  
+  ggplot(df_m[df_m$Grade != "Grade NR", ],
+         aes(x = arm, y = value, color = Agg_response, shape = arm, fill = Agg_response)) +
+    geom_boxplot(width = 0.5, position = position_dodge(width = 0.6),
+                 outlier.colour = NA, show.legend = FALSE) +
+    geom_point(size = 2, alpha = 0.8,
+               position = position_jitterdodge(jitter.width = 0.3, jitter.height = 0, dodge.width = 0.5)) +
+    theme_bw() +
+    ylab("Adverse Event count") + xlab("") +
+    theme(
+      axis.text.x = element_blank(),
+      axis.text.y = element_text(size = 14, color = "black", face = "bold"),
+      axis.ticks.x = element_blank(),
+      axis.title.y = element_text(size = 14, face = "bold"),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.border = element_blank(),
+      axis.line.x = element_line(linewidth = 0.5, linetype = "solid", color = "black"),
+      axis.line.y = element_line(linewidth = 0.5, linetype = "solid", color = "black"),
+      legend.title = element_blank(),
+      legend.position = "right",
+      legend.key = element_blank(),
+      legend.text = element_text(size = 14, face = "bold"),
+      strip.background = element_blank(),
+      strip.text = element_text(size = 14, hjust = 0, face = "bold")
+    ) +
+    stat_compare_means(aes(label = after_stat(p.format)), show.legend = FALSE, method = "wilcox.test") +
+    scale_color_manual(values = color_groups) +
+    scale_fill_manual(values = color_groupsb) +
+    facet_wrap(~ Grade, scales = "free", nrow = 3) +
+    guides(shape = guide_legend(override.aes = list(size = 10)),
+           color = guide_legend(ncol = 1, override.aes = list(size = 10)))
+}
+
+# --- usage ---
+meta <- load_figure3_data("Figure3f_Figure4abcd/Figure3_metaDat.csv")
+plot_panel_a(meta)
+
+
+```
+
+## Figure 4 Panel b
+
+```{r,echo=T,eval=T,fig.height=14,fig.width=10}
+# ============================================================
+# Fig4/code/panel_b_ae_grade_tls.R
+# Panel B: AE counts by grade (1/2/3+), split by TLS total
+# and arm.
+# ============================================================
+library(dplyr)
+library(reshape2)
+library(ggplot2)
+library(ggpubr)
+source("Figure1/00_colors.R")
+source("Figure3f_Figure4abcd/03_load_data.R")   # for load_figure3_data()
+source("Figure1/utils_plot_group_boxplot.R")
+
+plot_panel_b <- function(meta) {
+  
+  # NOTE: requires AnatomicalOrigin and CollectionType columns —
+  # confirm these are present in whatever metatable is passed here.
+  # If Figure4_metaDat doesn't carry them, this filter step needs
+  # to happen upstream at metatable-generation time instead.
+  df_m <- meta %>%
+    filter(AnatomicalOrigin != "lymph_node") %>%
+    filter(CollectionType == "whole section") %>%
+    distinct(ID, .keep_all = TRUE) %>%
+    mutate(n_Events_Gradeover3 = n_Events_Grade3or_more) %>%   # already-collapsed column, as in Panel A
+    select(n_Events_Grade_1, n_Events_Grade_2, n_Events_Gradeover3, TLS_total_cat, arm, ID) %>%
+    reshape2::melt(id.vars = c("TLS_total_cat", "arm", "ID")) %>%
+    na.omit() %>%
+    group_by(TLS_total_cat, arm, variable, ID) %>%
+    summarise(total_value = sum(value, na.rm = TRUE), .groups = "drop") %>%
+    mutate(
+      Grade = variable,
+      value = total_value,
+      TLS_total_cat = factor(TLS_total_cat, levels = c("TLS_total_Presence", "TLS_total_Absence"))
+    )
+  
+  ggplot(df_m[df_m$Grade != "Grade NR", ],
+         aes(x = arm, y = value, color = TLS_total_cat, shape = arm, fill = TLS_total_cat)) +
+    geom_boxplot(width = 0.5, position = position_dodge(width = 0.6),
+                 outlier.colour = NA, show.legend = FALSE) +
+    geom_point(size = 2, alpha = 0.8,
+               position = position_jitterdodge(jitter.width = 0.3, jitter.height = 0, dodge.width = 0.5)) +
+    theme_bw() +
+    ylab("Adverse Event count") + xlab("") +
+    theme(
+      axis.text.x = element_blank(),
+      axis.text.y = element_text(size = 14, color = "black", face = "bold"),
+      axis.ticks.x = element_blank(),
+      axis.title.y = element_text(size = 14, face = "bold"),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.border = element_blank(),
+      axis.line.x = element_line(linewidth = 0.5, linetype = "solid", color = "black"),
+      axis.line.y = element_line(linewidth = 0.5, linetype = "solid", color = "black"),
+      legend.title = element_blank(),
+      legend.position = "right",
+      legend.key = element_blank(),
+      legend.text = element_text(size = 14, face = "bold"),
+      strip.background = element_blank(),
+      strip.text = element_text(size = 14, hjust = 0, face = "bold")
+    ) +
+    stat_compare_means(aes(label = after_stat(p.format)), show.legend = FALSE, method = "wilcox.test") +
+    scale_color_manual(values = color_groups_TLSb_total) +
+    scale_fill_manual(values = color_groups_TLSb_total) +
+    facet_wrap(~ Grade, scales = "free", nrow = 3) +
+    guides(shape = guide_legend(override.aes = list(size = 10)),
+           color = guide_legend(ncol = 1, override.aes = list(size = 10)))
+}
+
+# --- usage ---
+meta <- load_figure3_data("Figure3f_Figure4abcd/Figure3_metaDat.csv")
+plot_panel_b(meta)
+
+
+```
+
+## Figure 4 Panel c
+
+```{r,echo=T,eval=T,fig.height=14,fig.width=10}
+# ============================================================
+# Fig4/code/panel_c_ae_grade_gaba.R
+# Panel C: AE counts by grade, split by TLS-GABA group and arm.
+# and arm.
+# ============================================================
+library(dplyr)
+library(reshape2)
+library(ggplot2)
+library(ggpubr)
+source("Figure1/00_colors.R")
+source("Figure3f_Figure4abcd/03_load_data.R")   # for load_figure3_data()
+source("Figure1/utils_plot_group_boxplot.R")
+GABA_LEVELS <- c("TLS positive Low_GABA", "TLS positive High_GABA", "TLS negative")
+
+GABA_COMPARISONS <- list(
+  c("TLS positive Low_GABA", "TLS positive High_GABA"),
+  c("TLS positive Low_GABA", "TLS negative"),
+  c("TLS negative", "TLS positive High_GABA")
+)
+
+plot_panel_c <- function(meta) {
+  
+  # NOTE: assumes Sampling/Site columns exist and are distinct from
+  # (or aliases of) CollectionType/LesionCategory used elsewhere —
+  # confirm before trusting this filter combination.
+  df_m <- meta %>%
+    filter(AnatomicalOrigin != "lymph_node") %>%
+    filter(CollectionType == "whole section") %>%
+    filter(!is.na(GABA_synthesis_group_TLS2)) %>%
+    distinct(ID, .keep_all = TRUE) %>%
+    mutate(n_Events_Gradeover3 = n_Events_Grade3or_more) %>%   # already-collapsed column, consistent with Panels A/B
+    select(n_Events_Grade_1, n_Events_Grade_2, n_Events_Gradeover3,
+           GABA_synthesis_group_TLS2, arm, ID) %>%
+    reshape2::melt(id.vars = c("GABA_synthesis_group_TLS2", "arm", "ID")) %>%
+    na.omit() %>%
+    group_by(GABA_synthesis_group_TLS2, arm, variable, ID) %>%
+    summarise(total_value = sum(value, na.rm = TRUE), .groups = "drop") %>%
+    mutate(
+      Grade = variable,
+      value = total_value,
+      GABA_synthesis_group_TLS2 = factor(GABA_synthesis_group_TLS2, levels = GABA_LEVELS)
+    )
+  
+  ggplot(df_m[df_m$Grade != "Grade NR", ],
+         aes(x = GABA_synthesis_group_TLS2, y = value,
+             color = GABA_synthesis_group_TLS2, fill = GABA_synthesis_group_TLS2)) +
+    geom_boxplot(outlier.shape = NA, width = 0.6) +
+    geom_point(size = 2, alpha = 0.8, position = position_jitter(width = 0.2, height = 0)) +
+    stat_compare_means(comparisons = GABA_COMPARISONS, method = "wilcox.test",
+                       aes(label = after_stat(p.format)), hide.ns = TRUE) +
+    facet_grid(Grade ~ arm, scales = "free_y") +
+    scale_color_manual(values = color_groups_TLS_total_GABA) +     # solid — was incorrectly the alpha version
+    scale_fill_manual(values = color_groups_TLSb_total_GABA) +     # translucent — correct as-is
+    theme_bw() +
+    ylab("Adverse Event count") + xlab("GABA synthesis group (TLS)") +
+    theme(
+      axis.text.x = element_text(size = 10, angle = 45, hjust = 1, face = "bold"),
+      axis.text.y = element_text(size = 12, face = "bold"),
+      axis.title.y = element_text(size = 14, face = "bold"),
+      panel.grid = element_blank(),
+      strip.background = element_blank(),
+      strip.text = element_text(size = 12, face = "bold"),
+      legend.position = "none"
+    )
+}
+
+
+# --- usage ---
+meta <- load_figure3_data("Figure3f_Figure4abcd/Figure3_metaDat.csv")
+plot_panel_c(meta)
+
+
+```
+
+## Figure 4 Panel d
+
+```{r,echo=T,eval=T,fig.height=10,fig.width=22}
+# ============================================================
+#  Fig4/code/panel_d_ae_fc_counts.R
+# Panel D: Log2 fold-change (TLS-high vs TLS-low, normalized per
+# patient-in-stratum) and absolute AE counts, by arm, top-10 AE
+# categories.
+#============================================================
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggpubr)
+library(RColorBrewer)
+source("Figure1/00_colors.R")
+source("Figure3f_Figure4abcd/03_load_data.R")   # for load_figure3_data()
+source("Figure1/utils_plot_group_boxplot.R")
+AE_CATEGORY_COLS <- c(
+  "Blood and lymphatic system disorders", "Endocrine disorders", "Fatigue",
+  "Gastrointestinal disorders", "Metabolism and nutrition disorders",
+  "Musculoskeletal and connective tissue disorders", "Nervous system disorders",
+  "Renal and urinary disorders", "Respiratory, thoracic and mediastinal disorders",
+  "Skin and subcutaneous tissue disorders"
+)
+
+# ------------------------------------------------------------
+# build_ae_counts(): verified in the prior sanity check (55/55
+# rows match the original event-level ae_updated2026 exactly).
+# Now also returns top_10_aes so downstream factor levels stay
+# in sync with whatever list was actually used to filter.
+# ------------------------------------------------------------
+build_ae_counts <- function(meta, top_n = 10) {
+  meta$TLS_status_2 <- ifelse(meta$TLS_total_cat == "TLS_total_Presence","high","low")
+  stopifnot("TLS_status_2" %in% colnames(meta))
+  
+  base <- meta %>%
+    filter(AnatomicalOrigin != "lymph_node") %>%
+    filter(CollectionType == "whole section") %>%
+    filter(!is.na(TLS_status_2))
+  
+  long <- base %>%
+    select(ID, arm, TLS_status_2, all_of(AE_CATEGORY_COLS)) %>%
+    pivot_longer(cols = all_of(AE_CATEGORY_COLS), names_to = "CTCAE_edit", values_to = "count") %>%
+    filter(!is.na(count), count > 0)
+  
+  top_10_aes <- long %>%
+    group_by(CTCAE_edit) %>%
+    summarise(total_events = sum(count), .groups = "drop") %>%
+    slice_max(total_events, n = top_n) %>%
+    pull(CTCAE_edit)
+  
+  ae_counts <- long %>%
+    filter(CTCAE_edit %in% top_10_aes) %>%
+    group_by(arm, CTCAE_edit, TLS_status_2) %>%
+    summarise(Count = sum(count), total_patients = n_distinct(ID), .groups = "drop") %>%
+    mutate(Normalized_Count = Count / total_patients)
+  
+  list(ae_counts = ae_counts, top_10_aes = top_10_aes, filtered_base = base)
+}
+
+# ------------------------------------------------------------
+# patients_per_tls: true stratum size (arm x TLS_status_2),
+# built from the SAME filtered population used in build_ae_counts
+# (AnatomicalOrigin != lymph_node, CollectionType == whole section,
+# TLS_status_2 non-missing) — not restricted to patients who had
+# a given AE category, unlike ae_counts' own total_patients.
+# ------------------------------------------------------------
+build_patients_per_tls <- function(filtered_base) {
+  filtered_base %>%
+    distinct(ID, arm, TLS_status_2) %>%
+    count(TLS_status_2, arm, name = "total_patients")
+}
+
+# ------------------------------------------------------------
+# Panel D: fold-change + absolute-count plots
+# ------------------------------------------------------------
+plot_panel_d <- function(meta) {
+  
+  ae_build <- build_ae_counts(meta)
+  ae_counts <- ae_build$ae_counts
+  top_10_aes <- ae_build$top_10_aes
+  patients_per_tls <- build_patients_per_tls(ae_build$filtered_base)
+  
+  ae_normalized <- ae_counts %>%
+    left_join(patients_per_tls, by = c("arm", "TLS_status_2")) %>%
+    mutate(Normalized_Count_New = Count / total_patients.y) %>%
+    select(arm, CTCAE_edit, TLS_status_2, Count, total_patients.y, Normalized_Count_New)
+  
+  unique_pairs <- ae_normalized %>%
+    select(arm, CTCAE_edit) %>%
+    distinct() %>%
+    as.data.frame()
+  
+  ae_fc <- ae_normalized %>%
+    select(arm, CTCAE_edit, TLS_status_2, Normalized_Count_New, Count) %>%
+    pivot_wider(names_from = TLS_status_2, values_from = c(Normalized_Count_New, Count)) %>%
+    mutate(
+      Count_high = ifelse(is.na(Count_high), 0, Count_high),
+      Count_low  = ifelse(is.na(Count_low),  0, Count_low),
+      Normalized_Count_New_high = ifelse(is.na(Normalized_Count_New_high), 0, Normalized_Count_New_high),
+      Normalized_Count_New_low  = ifelse(is.na(Normalized_Count_New_low),  0, Normalized_Count_New_low),
+      FoldChange  = Normalized_Count_New_high / Normalized_Count_New_low,
+      Total_Count = Count_high + Count_low
+    ) %>%
+    # if one class has zero counts, fold change collapses to the other class's value
+    mutate(FoldChange = ifelse(is.infinite(FoldChange) | FoldChange == 0.0,
+                               pmax(Normalized_Count_New_high, Normalized_Count_New_low),
+                               FoldChange))
+  
+  stopifnot(all(unique_pairs$CTCAE_edit == ae_fc$CTCAE_edit))   # was table()==-based eyeball check; now a hard guard
+  
+  unique_pairs$fold_change <- ifelse(is.infinite(as.numeric(ae_fc$FoldChange)), 0, as.numeric(ae_fc$FoldChange))
+  unique_pairs$Counts <- as.numeric(ae_fc$Total_Count)
+  unique_pairs$CTCAE_edit <- factor(unique_pairs$CTCAE_edit, levels = rev(top_10_aes))
+  unique_pairs$arm <- factor(unique_pairs$arm, levels = c("TKI", "Nivo", "Nivo-Ipi"))
+  unique_pairs$log2FC <- ifelse(unique_pairs$fold_change != 0, log2(unique_pairs$fold_change), 0)
+  
+  p_FC2 <- ggplot(unique_pairs, aes(x = CTCAE_edit, y = log2FC, fill = arm)) +
+    geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+    coord_cartesian(ylim = c(-3, 3)) +
+    scale_fill_manual(values = arm_colors, name = "Treatment") +
+    geom_hline(yintercept = 0, color = "grey", linewidth = 1) +
+    geom_text(aes(label = round(log2FC, 2), hjust = ifelse(log2FC > 0, -0.5, 1)),
+              position = position_dodge(width = 0.7), color = "black") +
+    labs(title = "Log2 Fold Changes of Adverse Events between TLS-presence and TLS-absence",
+         x = "Adverse Event Type", y = "Log2 Fold Change", fill = "Treatment") +
+    coord_flip() +
+    theme_classic(base_size = 18)
+  
+  p_Counts <- ggplot(unique_pairs, aes(x = CTCAE_edit, y = Counts, fill = arm)) +
+    geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+    coord_cartesian(ylim = c(-3, 3)) +
+    scale_fill_manual(values = arm_colors, name = "Treatment") +
+    geom_hline(yintercept = 0, color = "grey", linewidth = 1) +
+    geom_text(aes(label = round(Counts, 2)), hjust = -0.25,
+              position = position_dodge(width = 0.7), color = "black") +
+    labs(title = "Absolute counts of Adverse Events between All patients (n=109)",
+         x = "Adverse Event Type", y = "Absolute count", fill = "Treatment") +
+    coord_flip() +
+    theme_classic(base_size = 18)
+  
+  ggarrange(
+    p_Counts,
+    p_FC2 + theme(axis.text.y = element_blank(), axis.ticks.y = element_blank()),
+    ncol = 2, nrow = 1, common.legend = TRUE, align = "h"
+  )
+}
+
+
+# --- usage ---
+meta <- load_figure3_data("Figure3f_Figure4abcd/Figure3_metaDat.csv")
+plot_panel_d(meta)
+
+
+```
+
+## Rsession
+
+```{r,echo=T,eval=T}
+sessionInfo()
+```
