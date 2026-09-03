@@ -19,14 +19,14 @@ If you use any data or code derived from this study, please cite:
 ## Code to reproduce main Figures
 Visualize HTML files containing the code for each main figure by clicking on the coresponding links here:
 
- * [Figure 1. PRISMA ccRCC immune signature predict response to nivolumab + ipilimumab](http://htmlpreview.github.io/?https://github.com/iS4i4S/GABA-TLS/blob/main/Figures/Figure1.html): To reproduce this figure you need to download the needed metadata (Figure1_metaDat.csv) from the EGA..? (see Data avaliability below).
+ * [Figure 1. PRISMA ccRCC immune signature predict response to nivolumab + ipilimumab](http://htmlpreview.github.io/?https://github.com/iS4i4S/AEs---BIONIKK/blob/main/Figure1/Figure1.html): To reproduce this figure you need to download the needed metadata (Figure1_metaDat.csv) from the EGA..? (see Data avaliability below).
 
  * [Figure 2. PRISMA signature associates with TLS enrichment and improved response to nivolumab–ipilimumab, modulated by intratumoral GABA
-](http://htmlpreview.github.io/?https://github.com/iS4i4S/GABA-TLS/blob/main/Figures/Figure1.html): To reproduce this figure you need to download the needed metadata (Figure2_metaDat.csv) from the EGA..? (see Data avaliability below).
+](http://htmlpreview.github.io/?https://github.com/iS4i4S/AEs---BIONIKK/blob/main/Figure2/Figure2.html): To reproduce this figure you need to download the needed metadata (Figure2_metaDat.csv) from the EGA..? (see Data avaliability below).
  
- * [Figure 3 panel f and Figure 4 panels a-d](http://htmlpreview.github.io/?https://github.com/iS4i4S/GABA-TLS/blob/main/Figures/Figure1.html): To reproduce Figure 3 panel f and Figure 4 panels a-d you need to download the needed metadata (Figure3_metaDat.csv) from the EGA..? (see Data avaliability below).
+ * [Figure 3 panel f and Figure 4 panels a-d](http://htmlpreview.github.io/?https://github.com/iS4i4S/AEs---BIONIKK/blob/main/Figure3f_Figure4abcd/Figure3f_Figure4abcd.html): To reproduce Figure 3 panel f and Figure 4 panels a-d you need to download the needed metadata (Figure3_metaDat.csv) from the EGA..? (see Data avaliability below).
  
-* [Figure 3 panel a-e and Figure 4 panels e-g](http://htmlpreview.github.io/?https://github.com/iS4i4S/GABA-TLS/blob/main/Figures/Figure1.html): To reproduce Figure 3 panels a-e and Figure 4 e-g you need to download the needed metadata (Figure4_metaDat.csv) from the EGA..? (see Data avaliability below).
+* [Figure 3 panel a-e and Figure 4 panels e-g](http://htmlpreview.github.io/?https://github.com/iS4i4S/AEs---BIONIKK/blob/main/Figure3abcde_Figure4efg/Figure3abcde_Figure4efg.html): To reproduce Figure 3 panels a-e and Figure 4 e-g you need to download the needed metadata (Figure4_metaDat.csv) from the EGA..? (see Data avaliability below).
 
 ## Data avaliability
 Needed data from the BioniKK cohort including clinical variables (OS, PFS, TST) as well as adverse events have been deposited on EGA under the accession ID [EGA](pending)
